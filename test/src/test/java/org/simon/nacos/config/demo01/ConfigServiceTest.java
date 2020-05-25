@@ -37,7 +37,7 @@ public class ConfigServiceTest {
         StandardEnvironment environment = new StandardEnvironment();
 
         Properties props = buildNacosProperties(environment,
-            "127.0.0.1:8848",
+            "127.0.0.1:8848,192.168.1.1:9999",
             null,
             null,
             null,

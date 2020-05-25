@@ -158,6 +158,7 @@ public class ParamUtil {
     public static String parseNamespace(Properties properties) {
         String namespaceTmp = null;
 
+        //使用阿里云acm多租户初始化namespace
         String isUseCloudNamespaceParsing =
             properties.getProperty(PropertyKeyConst.IS_USE_CLOUD_NAMESPACE_PARSING,
                 System.getProperty(SystemPropertyKeyConst.IS_USE_CLOUD_NAMESPACE_PARSING,
@@ -180,6 +181,7 @@ public class ParamUtil {
             });
         }
 
+        //上面初始化失败，则使用properties中提取namespace
         if (StringUtils.isBlank(namespaceTmp)) {
             namespaceTmp = properties.getProperty(PropertyKeyConst.NAMESPACE);
         }

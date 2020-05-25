@@ -136,6 +136,7 @@ public class ServerListManager {
             }
             serverUrls = serverAddrs;
             if (StringUtils.isBlank(namespace)) {
+                //比如：fixed-127.0.0.1_8848-192.168.1.1_9999
                 name = FIXED_NAME + "-" + getFixedNameSuffix(serverUrls.toArray(new String[serverUrls.size()]));
             } else {
                 this.namespace = namespace;
@@ -207,8 +208,16 @@ public class ServerListManager {
         return StringUtils.isNotBlank(endpointTmp) ? endpointTmp : "";
     }
 
+    /**
+     * ServerListManager的start方法在非isStarted且非isFixed的条件下会执行GetServerListTask，
+     * 失败重试次数为initServerlistRetryTimes，如果serverUrls为空则抛出NacosException；
+     * 如果不为空则注册该getServersTask每隔30秒执行一次来刷新server list
+     *
+     * @throws NacosException
+     */
     public synchronized void start() throws NacosException {
 
+        //isStarted=true表示已启动，不能重复启动 isFixed=true表示server list是固定的，非通过url请求动态获取
         if (isStarted || isFixed) {
             return;
         }
@@ -412,6 +421,7 @@ public class ServerListManager {
     private int endpointPort = 8080;
     private String contentPath = ParamUtil.getDefaultContextPath();
     private String serverListName = ParamUtil.getDefaultNodesPath();
+    //server urls
     volatile List<String> serverUrls = new ArrayList<String>();
 
     private volatile String currentServerAddr;

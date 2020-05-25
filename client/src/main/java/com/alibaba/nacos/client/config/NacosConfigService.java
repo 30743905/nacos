@@ -76,7 +76,9 @@ public class NacosConfigService implements ConfigService {
         } else {
             encode = encodeTmp.trim();
         }
+        //初始化namespace
         initNamespace(properties);
+
         agent = new MetricsHttpAgent(new ServerHttpAgent(properties));
         agent.start();
         worker = new ClientWorker(agent, configFilterChainManager, properties);
