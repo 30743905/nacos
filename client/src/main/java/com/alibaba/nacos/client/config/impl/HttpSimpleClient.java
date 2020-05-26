@@ -40,8 +40,10 @@ public class HttpSimpleClient {
 
     static public HttpResult httpGet(String url, List<String> headers, List<String> paramValues,
                                      String encoding, long readTimeoutMs, boolean isSSL) throws IOException {
+        //请求参数编码
         String encodedContent = encodingParams(paramValues, encoding);
         url += (null == encodedContent) ? "" : ("?" + encodedContent);
+        // Limiter.isLimit()：请求限流，默认每秒5个，返回true表示被限流了
         if (Limiter.isLimit(MD5.getInstance().getMD5String(
             new StringBuilder(url).append(encodedContent).toString()))) {
             return new HttpResult(NacosException.CLIENT_OVER_THRESHOLD,
@@ -53,13 +55,16 @@ public class HttpSimpleClient {
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("GET");
+            //设置连接超时和读超时
             conn.setConnectTimeout(ParamUtil.getConnectTimeout() > 100 ? ParamUtil.getConnectTimeout() : 100);
             conn.setReadTimeout((int) readTimeoutMs);
+            //添加exConfigInfo和RequestId(uuid)
             List<String> newHeaders = getHeaders(url, headers, paramValues);
+            //设置header
             setHeaders(conn, newHeaders, encoding);
-
+            //发送请求
             conn.connect();
-
+            //获取响应码
             int respCode = conn.getResponseCode();
             String resp = null;
 
@@ -68,6 +73,7 @@ public class HttpSimpleClient {
             } else {
                 resp = IoUtils.toString(conn.getErrorStream(), encoding);
             }
+            //返回结果
             return new HttpResult(respCode, conn.getHeaderFields(), resp);
         } finally {
             IoUtils.closeQuietly(conn);

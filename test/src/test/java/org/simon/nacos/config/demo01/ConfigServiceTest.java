@@ -4,9 +4,11 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.PropertyKeyConst;
+import com.alibaba.nacos.api.common.Constants;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
+import com.alibaba.nacos.client.config.NacosConfigService;
 import com.alibaba.nacos.client.config.listener.impl.PropertiesListener;
 
 import org.apache.commons.lang3.StringUtils;
@@ -54,7 +56,6 @@ public class ConfigServiceTest {
         configService = NacosFactory.createConfigService(props);
         ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("nacos-listener-%d").build();
         executor = Executors.newFixedThreadPool(5, threadFactory);
-
     }
 
     /**
@@ -62,18 +63,9 @@ public class ConfigServiceTest {
      * @throws NacosException
      */
     @Test
-    public void getConfigTest() throws NacosException {
-        LongStream.rangeClosed(1, 20).forEach(x -> {
-            String content = null;
-            try {
-                content = configService.getConfig("other", "DEFAULT_GROUP", 5000L);
-                System.out.println(System.currentTimeMillis()/1000+" -> content:"+content);
-                TimeUnit.SECONDS.sleep(2);
-            } catch (NacosException | InterruptedException e) {
-                e.printStackTrace();
-            }
-
-        });
+    public void getConfigTest() throws Exception {
+        String content = configService.getConfig("other", "DEFAULT_GROUP", 5000L);
+        System.out.println("content:" + content);
     }
 
     /**
@@ -116,7 +108,7 @@ public class ConfigServiceTest {
         });
 
 
-        TimeUnit.SECONDS.sleep(100);
+        TimeUnit.SECONDS.sleep(1000);
     }
 
 
@@ -190,6 +182,12 @@ public class ConfigServiceTest {
         properties.put(PropertyKeyConst.ENABLE_REMOTE_SYNC_CONFIG,
             String.valueOf(enableRemoteSyncConfig));
         return properties;
+    }
+
+
+    @Test
+    public void t1(){
+        System.out.println(Constants.WORD_SEPARATOR);
     }
 
 

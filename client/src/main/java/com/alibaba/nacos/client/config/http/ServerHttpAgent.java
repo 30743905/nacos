@@ -50,6 +50,27 @@ import java.util.concurrent.*;
  * Server Agent
  *
  * @author water.lyl
+ *
+ *
+ * 1、ServerHttpAgent实现了HttpAgent接口，其httpGet、httpPost、httpDelete方法的结构大体相同，都是以do while做循环，循环条件为距离开始执行时间不超过readTimeoutMs
+ * 2、循环开始之前会通过serverListMgr.getCurrentServerAddr()方法获取currentServerAddr，循环体内则通过HttpSimpleClient的相应方法执行请求，
+ *      如果返回的HTTP Code为HTTP_INTERNAL_ERROR、HTTP_BAD_GATEWAY、HTTP_UNAVAILABLE则打印error日志，
+ *      否则执行serverListMgr.updateCurrentServerAddr(currentServerAddr)，然后返回
+ * 3、如果出现异常或者没有提前返回，则判断serverListMgr.getIterator().hasNext()，如果为true则使用serverListMgr.getIterator().next()更新currentServerAddr，
+ *      为false则递减maxRetry，然后执行serverListMgr.refreshCurrentServerAddr()
+ *
+ * currentServerAddr：这个属性就是客户端发起请求时候的服务器地址;这个属性可以看成是 将多个服务器地址 随机打乱之后排好序; 然后遍历这个列表;
+ * 配置文件Properties中有一个maxRetry属性,服务器列表遍历的次数，如果调用某个服务失败则尝试下一个，直到遍历完成依然失败，则打乱服务器列表重新遍历尝试
+ *
+ * 客户端发起请求的整个流程是这样的：
+ *      1、对当前的currentServerAddr发起请求,如果成功,currentServerAddr不变,然后返回结果;
+ *      2、如果请求失败,则会获取下一个服务器地址serverListMgr.getIterator().next()，执行1进行重试；
+ *      3、如果服务列表全部调用一遍后依然失败，则maxRetry减1后大于等于0，调用serverListMgr.refreshCurrentServerAddr()打乱serverUrls之后再来一次重新遍历;
+ *      4、如果3打乱了maxRetry次之后,则不再继续,抛出异常
+ *      5、如果以上有请求成功,则把请求成功的地址改成currentServerAddr
+ * 总结一句话就是: 轮流请求服务器地址直到成功或者超过重试次数或者超过超时时间
+ *
+ *
  */
 public class ServerHttpAgent implements HttpAgent {
 
@@ -75,8 +96,11 @@ public class ServerHttpAgent implements HttpAgent {
                               long readTimeoutMs) throws IOException {
         final long endTime = System.currentTimeMillis() + readTimeoutMs;
         final boolean isSSL = false;
+        //添加token、namespace
         injectSecurityInfo(paramValues);
+        //获取一个服务地址，nacos可能集群方式存在多个，currentServerAddr表示当前请求的服务地址
         String currentServerAddr = serverListMgr.getCurrentServerAddr();
+        //每个服务最大重试次数
         int maxRetry = this.maxRetry;
 
         do {
@@ -107,17 +131,20 @@ public class ServerHttpAgent implements HttpAgent {
                 throw ioe;
             }
 
+            //走到这里说明之前发送请求失败了，需要重新获取一个服务地址
             if (serverListMgr.getIterator().hasNext()) {
                 currentServerAddr = serverListMgr.getIterator().next();
             } else {
+                //服务列表都尝试一遍后都有问题，则maxRetry减1后，打乱服务列表重新进行尝试
                 maxRetry--;
                 if (maxRetry < 0) {
                     throw new ConnectException("[NACOS HTTP-GET] The maximum number of tolerable server reconnection errors has been reached");
                 }
+                //将服务地址随机打乱后，重新从第一个开始尝试
                 serverListMgr.refreshCurrentServerAddr();
             }
 
-        } while (System.currentTimeMillis() <= endTime);
+        } while (System.currentTimeMillis() <= endTime);//没有超时则会进行重试
 
         LOGGER.error("no available server");
         throw new ConnectException("no available server");
@@ -251,8 +278,11 @@ public class ServerHttpAgent implements HttpAgent {
     }
 
     public ServerHttpAgent(Properties properties) throws NacosException {
+        // ServerListManager主要用于管理server urls
         serverListMgr = new ServerListManager(properties);
+        // SecurityProxy用于管理登录
         securityProxy = new SecurityProxy(properties);
+        // 获取namespace
         namespaceId = properties.getProperty(PropertyKeyConst.NAMESPACE);
         init(properties);
         securityProxy.login(serverListMgr.getServerUrls());

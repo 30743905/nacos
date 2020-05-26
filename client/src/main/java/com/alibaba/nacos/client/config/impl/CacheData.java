@@ -168,14 +168,28 @@ public class CacheData {
         return "CacheData [" + dataId + ", " + group + "]";
     }
 
+    /**
+     * 遍历所有的监听器，然后看配置是否变更，有变更会触发监听通知listener
+     */
     void checkListenerMd5() {
         for (ManagerListenerWrap wrap : listeners) {
-            if (!md5.equals(wrap.lastCallMd5)) {
+            if (!md5.equals(wrap.lastCallMd5)) {//md5判断
                 safeNotifyListener(dataId, group, content, type, md5, wrap);
             }
         }
     }
 
+    /**
+     * 创建了一个任务，封装好信息，调用监听器的receiveConfigInfo方法接受数据处理。然后修改内容和MD5。
+     * 这里他设置了一下类加载器，包装和监听器的类加载器一样，可能跟SPI反射调用相关。
+     *
+     * @param dataId
+     * @param group
+     * @param content
+     * @param type
+     * @param md5
+     * @param listenerWrap
+     */
     private void safeNotifyListener(final String dataId, final String group, final String content, final String type,
                                     final String md5, final ManagerListenerWrap listenerWrap) {
         final Listener listener = listenerWrap.listener;
@@ -245,8 +259,24 @@ public class CacheData {
         return (null == config) ? Constants.NULL : MD5.getInstance().getMD5String(config);
     }
 
+    /**
+     * 从本地获取配置内容，优先使用failvoer配置，然后使用snapshot配置
+     * @param name
+     * @param dataId
+     * @param group
+     * @param tenant
+     * @return
+     */
     private String loadCacheContentFromDiskLocal(String name, String dataId, String group, String tenant) {
+        /**
+         * 优先级最高使用failvoer配置
+         * failvoer是本地配置，比如：C:\Users\Admin\nacos\config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos\data\config-data\DEFAULT_GROUP\other
+         */
         String content = LocalConfigInfoProcessor.getFailover(name, dataId, group, tenant);
+        /**
+         * getFailover()获取空，然后getSnapshot()获取本地配置快照
+         * 比如：C:\Users\Admin\nacos\config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos\snapshot\DEFAULT_GROUP\other
+         */
         content = (null != content) ? content
             : LocalConfigInfoProcessor.getSnapshot(name, dataId, group, tenant);
         return content;
@@ -263,7 +293,9 @@ public class CacheData {
         this.tenant = TenantUtil.getUserTenantForAcm();
         listeners = new CopyOnWriteArrayList<ManagerListenerWrap>();
         this.isInitializing = true;
+        //从本地获取配置内容
         this.content = loadCacheContentFromDiskLocal(name, dataId, group, tenant);
+        //根据配置内容计算md5
         this.md5 = getMd5String(content);
     }
 

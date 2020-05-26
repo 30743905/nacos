@@ -166,6 +166,14 @@ public class ClientWorker {
         return cache;
     }
 
+    /**
+     * 从cacheMap缓存中获取CacheData，缓存不存在时new创建并放入到cacheMap缓存中
+     * @param dataId
+     * @param group
+     * @param tenant
+     * @return
+     * @throws NacosException
+     */
     public CacheData addCacheDataIfAbsent(String dataId, String group, String tenant) throws NacosException {
         CacheData cache = getCache(dataId, group, tenant);
         if (null != cache) {
@@ -196,6 +204,7 @@ public class ClientWorker {
         }
         LOGGER.info("[{}] [subscribe] {}", agent.getName(), key);
 
+        //指标统计
         MetricsMonitor.getListenConfigCountMonitor().set(cacheMap.get().size());
 
         return cache;
@@ -276,7 +285,7 @@ public class ClientWorker {
         final String tenant = cacheData.tenant;
         File path = LocalConfigInfoProcessor.getFailoverFile(agent.getName(), dataId, group, tenant);
 
-        // 没有 -> 有
+        // 没有 -> 有 如果没有使用本地配置，但是文件存在，主动开启本地配置
         if (!cacheData.isUseLocalConfigInfo() && path.exists()) {
             String content = LocalConfigInfoProcessor.getFailover(agent.getName(), dataId, group, tenant);
             String md5 = MD5.getInstance().getMD5String(content);
@@ -290,6 +299,7 @@ public class ClientWorker {
         }
 
         // 有 -> 没有。不通知业务监听器，从server拿到配置后通知。
+        //开启了本地配置，但是文件不存在，则关闭本地配置
         if (cacheData.isUseLocalConfigInfo() && !path.exists()) {
             cacheData.setUseLocalConfigInfo(false);
             LOGGER.warn("[{}] [failover-change] failover file deleted. dataId={}, group={}, tenant={}", agent.getName(),
@@ -298,6 +308,9 @@ public class ClientWorker {
         }
 
         // 有变更
+        /**
+         * 使用本地配置且文件存在，文件被修改则重新加载本地配置文件到内存中
+         */
         if (cacheData.isUseLocalConfigInfo() && path.exists()
             && cacheData.getLocalConfigInfoVersion() != path.lastModified()) {
             String content = LocalConfigInfoProcessor.getFailover(agent.getName(), dataId, group, tenant);
@@ -314,10 +327,15 @@ public class ClientWorker {
         return (null == group) ? Constants.DEFAULT_GROUP : group.trim();
     }
 
+    /**
+     * 先得再说下这个，这个方法是每10毫秒执行一次，但是并不是会一直去执行新的LongPollingRunnable任务，
+     * 是根据监听器的数量决定要不要再启动一个LongPollingRunnable，每个LongPollingRunnable默认可以负责3000个监听器的轮询。
+     * 所以一般就只是开启了一个，因为是Math.ceil向上取整，最开始就会开启。
+     */
     public void checkConfigInfo() {
         // 分任务
         int listenerSize = cacheMap.get().size();
-        // 向上取整为批数
+        // 向上取整为批数  longingTaskCount表示需要LongPollingRunnable任务数量
         int longingTaskCount = (int) Math.ceil(listenerSize / ParamUtil.getPerTaskConfigSize());
         if (longingTaskCount > currentLongingTaskCount) {
             for (int i = (int) currentLongingTaskCount; i < longingTaskCount; i++) {
@@ -330,10 +348,13 @@ public class ClientWorker {
 
     /**
      * 从Server获取值变化了的DataID列表。返回的对象里只有dataId和group是有效的。 保证不返回NULL。
+     *
+     * 这里就会根据isInitializingCacheList来设置一个标记，让服务器判断是否要挂起，请求的url是/v1/cs/configs/listener，
+     * 这里超时增加了，默认变成了45秒，就是为了应对挂起和检查配置文件变更。这里根据情况还要设置服务器健康状态setHealthServer，然后拿到改变的配置文件结果解析后返回。
      */
     List<String> checkUpdateDataIds(List<CacheData> cacheDatas, List<String> inInitializingCacheList) throws IOException {
         StringBuilder sb = new StringBuilder();
-        for (CacheData cacheData : cacheDatas) {
+        for (CacheData cacheData : cacheDatas) {//把配置信息都连起来，一次请求
             if (!cacheData.isUseLocalConfigInfo()) {
                 sb.append(cacheData.dataId).append(WORD_SEPARATOR);
                 sb.append(cacheData.group).append(WORD_SEPARATOR);
@@ -369,7 +390,7 @@ public class ClientWorker {
         headers.add("" + timeout);
 
         // told server do not hang me up if new initializing cacheData added in
-        if (isInitializingCacheList) {
+        if (isInitializingCacheList) {//是初始化的会设置一个请求头标记
             headers.add("Long-Pulling-Timeout-No-Hangup");
             headers.add("true");
         }
@@ -381,15 +402,22 @@ public class ClientWorker {
         try {
             // In order to prevent the server from handling the delay of the client's long task,
             // increase the client's read timeout to avoid this problem.
-
+            // 增加超时时间，防止被挂起，只有初始化的时候isInitializingCacheList=true不会挂起，应该是服务器看了请求头Long-Pulling-Timeout-No-Hangup才不会挂起
             long readTimeoutMs = timeout + (long) Math.round(timeout >> 1);
+            /**
+             * 这里的调用就是所谓的长轮询
+             * url:   http://ip:port/v1/cs/configs/listener
+             * 超时时间是默认值30s
+             */
             HttpResult result = agent.httpPost(Constants.CONFIG_CONTROLLER_PATH + "/listener", headers, params,
                 agent.getEncode(), readTimeoutMs);
 
             if (HttpURLConnection.HTTP_OK == result.code) {
                 setHealthServer(true);
+                // 将返回的dataId清单进行解析并返回到上层
                 return parseUpdateDataIdResponse(result.content);
             } else {
+                // NacosConfigService.getServerStatus就是通过healthServer判断
                 setHealthServer(false);
                 LOGGER.error("[{}] [check-update] get changed dataId error, code: {}", agent.getName(), result.code);
             }
@@ -496,19 +524,31 @@ public class ClientWorker {
             this.taskId = taskId;
         }
 
+        /**
+         * 1、首先会遍历所有的CacheData，找出是当前任务的加入到一个集合里；
+         * 2、然后如果是本次任务的就先检查本地配置，如果有改变的话就要通知监听器listener；
+         * 3、然后去请求服务器获取配置信息，如果是有在初始化的CacheData，那服务器就会立即返回，否则会被挂起，
+         *      这个原因就是为了不进行频繁的空轮询，又能实现动态配置，只要在挂起的时间段内有改变，就可以立即响应给客户端。
+         *      获取完之后再检查有没改变，有的话也要通知，然后继续调度当前任务。
+         *
+         */
         @Override
         public void run() {
 
             List<CacheData> cacheDatas = new ArrayList<CacheData>();
+            //是否是在初始化的CacheData，会影响服务器是否挂起或者立即返回
             List<String> inInitializingCacheList = new ArrayList<String>();
             try {
                 // check failover config
                 for (CacheData cacheData : cacheMap.get().values()) {
-                    if (cacheData.getTaskId() == taskId) {
+                    //首先会遍历所有的CacheData，找出是当前任务的加入到一个集合里
+                    if (cacheData.getTaskId() == taskId) {//属于当前长轮询任务的
                         cacheDatas.add(cacheData);
                         try {
+                            // 检查内存中的缓存信息与本地配置中信息是否一致，并进行相应处理
                             checkLocalConfig(cacheData);
-                            if (cacheData.isUseLocalConfigInfo()) {
+                            if (cacheData.isUseLocalConfigInfo()) {//使用本地配置
+                                // 本地配置和缓存比对有变更会触发listener通知
                                 cacheData.checkListenerMd5();
                             }
                         } catch (Exception e) {
@@ -518,6 +558,12 @@ public class ClientWorker {
                 }
 
                 // check server config
+                /**
+                 * 检查nacos server变更的配置文件，返回值是变更文件列表
+                 * 这个是把所有的CacheData的相关信息都连起来，一次性批量请求。但是其中有个比较重要的就是inInitializingCacheList，
+                 * 这个表示里面是否有正在初始化的CacheData，如果有的话后面会设置一个标记，是的服务器不会挂起请求，会立即响应。
+                 * 这里的响应只是告诉你哪些是有变化的，不会把内容给你，后面还得请求内容。
+                 */
                 List<String> changedGroupKeys = checkUpdateDataIds(cacheDatas, inInitializingCacheList);
                 LOGGER.info("get changedGroupKeys:" + changedGroupKeys);
 
@@ -530,11 +576,12 @@ public class ClientWorker {
                         tenant = key[2];
                     }
                     try {
+                        //有更新的从nacos server上获取配置最新内容，超时3秒
                         String[] ct = getServerConfig(dataId, group, tenant, 3000L);
                         CacheData cache = cacheMap.get().get(GroupKey.getKeyTenant(dataId, group, tenant));
-                        cache.setContent(ct[0]);
+                        cache.setContent(ct[0]);//设置配置内容
                         if (null != ct[1]) {
-                            cache.setType(ct[1]);
+                            cache.setType(ct[1]);//设置配置类型
                         }
                         LOGGER.info("[{}] [data-received] dataId={}, group={}, tenant={}, md5={}, content={}, type={}",
                             agent.getName(), dataId, group, tenant, cache.getMd5(),
@@ -547,14 +594,17 @@ public class ClientWorker {
                     }
                 }
                 for (CacheData cacheData : cacheDatas) {
+                    //不是初始化中的或者初始化集合里存在的
                     if (!cacheData.isInitializing() || inInitializingCacheList
                         .contains(GroupKey.getKeyTenant(cacheData.dataId, cacheData.group, cacheData.tenant))) {
+                        ////检查是否有变更，变更则触发listener回调
                         cacheData.checkListenerMd5();
+                        //请求过了后就设置为不在初始化中，这样就会被挂起，如果服务器配置有更新，就会立即返回，这样就可以实现动态配置更新，又不会太多的空轮询消耗
                         cacheData.setInitializing(false);
                     }
                 }
                 inInitializingCacheList.clear();
-
+                //继续调度当前任务
                 executorService.execute(this);
 
             } catch (Throwable e) {
@@ -579,6 +629,9 @@ public class ClientWorker {
 
     /**
      * groupKey -> cacheData
+     *
+     * key = dataId+group+namespace，如：other+DEFAULT_GROUP[+namespace]
+     *
      */
     private final AtomicReference<Map<String, CacheData>> cacheMap = new AtomicReference<Map<String, CacheData>>(
         new HashMap<String, CacheData>());

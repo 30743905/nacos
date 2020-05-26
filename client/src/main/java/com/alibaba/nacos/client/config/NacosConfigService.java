@@ -18,6 +18,11 @@ package com.alibaba.nacos.client.config;
 import com.alibaba.nacos.api.PropertyKeyConst;
 import com.alibaba.nacos.api.common.Constants;
 import com.alibaba.nacos.api.config.ConfigService;
+import com.alibaba.nacos.api.config.filter.IConfigFilter;
+import com.alibaba.nacos.api.config.filter.IConfigFilterChain;
+import com.alibaba.nacos.api.config.filter.IConfigRequest;
+import com.alibaba.nacos.api.config.filter.IConfigResponse;
+import com.alibaba.nacos.api.config.filter.IFilterConfig;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.client.config.filter.impl.ConfigFilterChainManager;
@@ -70,17 +75,21 @@ public class NacosConfigService implements ConfigService {
     private ConfigFilterChainManager configFilterChainManager = new ConfigFilterChainManager();
 
     public NacosConfigService(Properties properties) throws NacosException {
+        //初始化encode
         String encodeTmp = properties.getProperty(PropertyKeyConst.ENCODE);
         if (StringUtils.isBlank(encodeTmp)) {
             encode = Constants.ENCODE;
         } else {
             encode = encodeTmp.trim();
         }
-        //初始化namespace
+        //初始化namespace，并放置到properties中
         initNamespace(properties);
 
+        //ServerHttpAgent使用http方式访问nacos server，并使用装饰模式，MetricsHttpAgent具有指标统计功能
         agent = new MetricsHttpAgent(new ServerHttpAgent(properties));
+        //ServerHttpAgent.start()会调用ServerListManager.start()方法，完成nacos ip list收集
         agent.start();
+
         worker = new ClientWorker(agent, configFilterChainManager, properties);
     }
 
