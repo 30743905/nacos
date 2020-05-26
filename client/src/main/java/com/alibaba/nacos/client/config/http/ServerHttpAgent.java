@@ -284,7 +284,12 @@ public class ServerHttpAgent implements HttpAgent {
         securityProxy = new SecurityProxy(properties);
         // 获取namespace
         namespaceId = properties.getProperty(PropertyKeyConst.NAMESPACE);
+        // 初始化encode、ak/sk、maxRetry
         init(properties);
+        /**
+         * 如果配置username，这里会调用/v1/auth/users/login进行登录，服务端返回accessToken
+         * 后续ServerHttpAgent向Nacos发送请求时都会把accessToken放置到header中带过去
+         */
         securityProxy.login(serverListMgr.getServerUrls());
 
         ScheduledExecutorService executorService = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
@@ -297,6 +302,9 @@ public class ServerHttpAgent implements HttpAgent {
             }
         });
 
+        /**
+         * 定时任务5秒执行一次login()，符合一定条件时向nacos发送login请求获取新的accessToken，避免token失效
+         */
         executorService.scheduleWithFixedDelay(new Runnable() {
             @Override
             public void run() {
