@@ -38,6 +38,14 @@ public class LocalConfigInfoProcessor {
 
     private static final Logger LOGGER = LogUtils.logger(LocalConfigInfoProcessor.class);
 
+    /**
+     * C:\Users\Administrator\nacos\config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos\data\config-data\DEFAULT_GROUP\other
+     * @param serverName
+     * @param dataId
+     * @param group
+     * @param tenant
+     * @return
+     */
     static public String getFailover(String serverName, String dataId, String group, String tenant) {
         File localPath = getFailoverFile(serverName, dataId, group, tenant);
         if (!localPath.exists() || !localPath.isFile()) {
@@ -95,11 +103,32 @@ public class LocalConfigInfoProcessor {
         }
     }
 
+    /**
+     * C:\Users\Administrator\nacos\config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos\snapshot\DEFAULT_GROUP\other
+     * @param envName
+     * @param dataId
+     * @param group
+     * @param tenant
+     * @param config
+     */
     static public void saveSnapshot(String envName, String dataId, String group, String tenant, String config) {
+        //判断是否开启快照功能，默认是开启的，可以通过SnapShotSwitch.setIsSnapShot(Boolean)修改，发生调整时会清除snapshot目录下所有缓存文件
         if (!SnapShotSwitch.getIsSnapShot()) {
             return;
         }
+        /**
+         * 比如：C:\Users\Administrator\nacos\config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos\snapshot\DEFAULT_GROUP\other
+         * 1、基目录：C:\Users\Administrator\nacos\config
+         * 2、agentName：config\fixed-127.0.0.1_8848-192.168.1.1_9999_nacos
+         * 3、snapshot：表示是snapshot配置文件目录，如果是failover配置文件，这级是data
+         * 4、DEFAULT_GROUP：group
+         * 5、other：配置文件名称
+         */
         File file = getSnapshotFile(envName, dataId, group, tenant);
+        /**
+         * 如果从nacos server获取的配置内容空，则删除本地对应的snapshot文件
+         * 否则，将最新内容更新到本地对应的snapshot文件中
+         */
         if (null == config) {
             try {
                 IoUtils.delete(file);

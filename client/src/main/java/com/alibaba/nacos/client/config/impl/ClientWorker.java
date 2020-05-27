@@ -236,6 +236,7 @@ public class ClientWorker {
             } else {
                 params = new ArrayList<String>(Arrays.asList("dataId", dataId, "group", group, "tenant", tenant));
             }
+            //利用ServerHttpAgent向nacos server发送get请求，path=/v1/cs/configs，params=dataId+group+tenant(namespace)
             result = agent.httpGet(Constants.CONFIG_CONTROLLER_PATH, null, params, agent.getEncode(), readTimeout);
         } catch (IOException e) {
             String message = String.format(
@@ -247,8 +248,10 @@ public class ClientWorker {
 
         switch (result.code) {
             case HttpURLConnection.HTTP_OK:
+                //更新本地对应的snapshot配置文件
                 LocalConfigInfoProcessor.saveSnapshot(agent.getName(), dataId, group, tenant, result.content);
                 ct[0] = result.content;
+                //设置配置文件类型，如：properties、yaml等
                 if (result.headers.containsKey(CONFIG_TYPE)) {
                     ct[1] = result.headers.get(CONFIG_TYPE).get(0);
                 } else {

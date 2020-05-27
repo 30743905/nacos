@@ -131,35 +131,41 @@ public class NacosConfigService implements ConfigService {
     }
 
     private String getConfigInner(String tenant, String dataId, String group, long timeoutMs) throws NacosException {
+        //group空则赋值DEFAULT_GROUP
         group = null2defaultGroup(group);
+        //校验dataId、group是否合法，不为空且必须是数字、字母或[- _ . :]四个字符，其它都是非法
         ParamUtils.checkKeyParam(dataId, group);
+        //返回结果封装
         ConfigResponse cr = new ConfigResponse();
 
         cr.setDataId(dataId);
         cr.setTenant(tenant);
         cr.setGroup(group);
 
-        // 优先使用本地配置
+        // 优先使用本地配置，获取到直接返回
         String content = LocalConfigInfoProcessor.getFailover(agent.getName(), dataId, group, tenant);
         if (content != null) {
             LOGGER.warn("[{}] [get-config] get failover ok, dataId={}, group={}, tenant={}, config={}", agent.getName(),
                 dataId, group, tenant, ContentUtils.truncateContent(content));
             cr.setContent(content);
+            //调用ConfigFilter.doFilter()方法
             configFilterChainManager.doFilter(null, cr);
             content = cr.getContent();
+            //如果本地配置存在，则直接返回本地配置，而不用去nacos server上去拉取
             return content;
         }
 
         try {
+            //去nacos server上拉取
             String[] ct = worker.getServerConfig(dataId, group, tenant, timeoutMs);
             cr.setContent(ct[0]);
-
+            //调用ConfigFilter chain对获取的配置进行处理
             configFilterChainManager.doFilter(null, cr);
             content = cr.getContent();
 
             return content;
         } catch (NacosException ioe) {
-            if (NacosException.NO_RIGHT == ioe.getErrCode()) {
+            if (NacosException.NO_RIGHT == ioe.getErrCode()) {//403没有权限，拒绝访问
                 throw ioe;
             }
             LOGGER.warn("[{}] [get-config] get from server error, dataId={}, group={}, tenant={}, msg={}",
@@ -168,8 +174,10 @@ public class NacosConfigService implements ConfigService {
 
         LOGGER.warn("[{}] [get-config] get snapshot ok, dataId={}, group={}, tenant={}, config={}", agent.getName(),
             dataId, group, tenant, ContentUtils.truncateContent(content));
+        //如果从nacos server上获取配置失败，则从本地snapshot中获取配置内容
         content = LocalConfigInfoProcessor.getSnapshot(agent.getName(), dataId, group, tenant);
         cr.setContent(content);
+        //调用ConfigFilter chain对获取的配置进行处理
         configFilterChainManager.doFilter(null, cr);
         content = cr.getContent();
         return content;
